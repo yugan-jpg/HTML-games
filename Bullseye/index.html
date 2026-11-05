@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bullseye — Rhythm Game</title>
+  <link rel="icon" type="image/webp" href="images/bullseyeicon.webp">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="ambient"></div>
+  <img id="customCursor" src="images/cursor.webp" alt="" aria-hidden="true">
+
+  <main id="app">
+    <section id="menuScreen" class="screen menu-screen">
+      <div class="menu-card">
+        <p class="eyebrow">POINT • CLICK • FLOW</p>
+        <h1>BULL<span>SEYE</span></h1>
+        <p class="tagline">Hit the pulse. Own the rhythm.</p>
+
+        <div class="song-panel">
+          <div class="panel-heading"><span>Music</span><small id="songName">Default Synthwave Pulse</small></div>
+          <label class="song-button" for="songInput"><img src="images/radioicon.png" alt="" onerror="this.style.display='none'"> Choose your own song</label>
+          <input id="songInput" type="file" accept="audio/*" hidden>
+          <div id="folderSongs" class="folder-songs" hidden></div>
+          <p class="hint">No song? A rhythmic synthwave track is ready to play.</p>
+        </div>
+
+        <div class="settings-grid">
+          <fieldset>
+            <legend>Difficulty</legend>
+            <div class="segmented" id="difficultyPicker">
+              <button data-difficulty="easy">Easy</button><button class="active" data-difficulty="normal">Normal</button><button data-difficulty="hard">Hard</button>
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend>Cursor skin</legend>
+            <div class="skin-picker" id="skinPicker">
+              <button class="skin active" data-skin="cursor.webp"><img src="images/cursor.webp" alt="Cursor one" onerror="this.parentElement.textContent='1'"></button>
+              <button class="skin" data-skin="cursor2.webp"><img src="images/cursor2.webp" alt="Cursor two" onerror="this.parentElement.textContent='2'"></button>
+              <button class="skin" data-skin="cursor3.webp"><img src="images/cursor3.webp" alt="Cursor three" onerror="this.parentElement.textContent='3'"></button>
+            </div>
+          </fieldset>
+        </div>
+
+        <div class="volume-panel">
+          <label>Master <input id="masterVolume" type="range" min="0" max="1" step=".01" value="0.8"></label>
+          <label>Music <input id="musicVolume" type="range" min="0" max="1" step=".01" value="0.8"></label>
+          <label>SFX <input id="sfxVolume" type="range" min="0" max="1" step=".01" value="0.7"></label>
+        </div>
+        <p id="menuMessage" class="menu-message" aria-live="polite"></p>
+        <button id="startButton" class="primary-button">Start rhythm <b>›</b></button>
+      </div>
+    </section>
+
+    <section id="gameScreen" class="screen game-screen" hidden>
+      <div class="hud">
+        <div class="progress-track"><div id="progressFill"></div></div>
+        <div class="hud-left"><span id="accuracyText">100.00%</span><small>ACCURACY</small><span id="countsText">0 Hits · 0 Miss</span></div>
+        <div class="hud-score"><span id="scoreText">0</span><small>SCORE</small></div>
+        <div class="hud-combo"><div class="combo-art" aria-hidden="true"></div><span id="comboText">0</span><small>COMBO</small><div class="combo-track"><div id="comboFill"></div></div></div>
+        <button id="stopButton" class="stop-button" aria-label="Stop and return to menu">■</button>
+        <button id="pauseButton" class="pause-button" aria-label="Pause game">Ⅱ</button>
+      </div>
+      <div id="playArea" aria-label="Rhythm play area"></div>
+      <div id="countdown" class="countdown" aria-live="assertive"></div>
+      <div id="pauseOverlay" class="overlay" hidden>
+        <div class="overlay-card"><p class="eyebrow">RHYTHM PAUSED</p><h2>Take a breath.</h2><button id="resumeButton" class="primary-button">Resume</button><button id="pauseRetryButton" class="secondary-button">Retry</button><button id="quitButton" class="text-button">Quit to menu</button></div>
+      </div>
+    </section>
+
+    <section id="resultsScreen" class="screen results-screen" hidden>
+      <div class="results-card"><p class="eyebrow">TRACK COMPLETE</p><div id="gradeText" class="grade">S</div><h2>Results</h2><div class="result-stats"><div><b id="resultScore">0</b><span>Score</span></div><div><b id="resultCombo">0</b><span>Max combo</span></div><div><b id="resultAccuracy">100.00%</b><span>Accuracy</span></div><div><b id="resultHits">0</b><span>Hits</span></div><div><b id="resultMisses">0</b><span>Misses</span></div></div><button id="resultRetryButton" class="primary-button">Play again</button><button id="menuButton" class="text-button">Back to menu</button></div>
+    </section>
+  </main>
+  <script src="script.js"></script>
+</body>
+</html>
