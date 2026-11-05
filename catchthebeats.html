@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Catch the Beats</title>
+<style>
+  :root {
+    --bg: #0d0e12;
+    --ink: #e8e6e3;
+    --muted: #6f7280;
+    --accent: #e0413f;
+    --hit: #d9c48a;
+    --line: #23242e;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    cursor: none;
+    user-select: none;
+  }
+
+  #stage { position: fixed; inset: 0; display: block; z-index: 0; }
+
+  /* ---------- HUD ---------- */
+  .hud {
+    position: fixed; top: 0; right: 0;
+    height: 100%; width: 260px;
+    padding: 40px 32px;
+    display: flex; flex-direction: column;
+    justify-content: center; gap: 34px;
+    border-left: 1px solid var(--line);
+    background: linear-gradient(90deg, transparent, rgba(18, 20, 26, 0.85) 40%);
+    pointer-events: none;
+    z-index: 2;
+  }
+  .label {
+    font-size: 10px; letter-spacing: .22em;
+    text-transform: uppercase; color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .value {
+    font-size: 34px; font-weight: 300;
+    font-variant-numeric: tabular-nums; line-height: 1;
+  }
+  #combo {
+    font-size: 76px; font-weight: 200; line-height: .9;
+    transition: transform 90ms ease-out, color 200ms;
+    transform-origin: left center;
+  }
+  #combo.bump { transform: scale(1.06); color: var(--hit); }
+  .rule { height: 1px; background: var(--line); }
+  #acc { font-size: 15px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  #offsetReadout {
+    font-size: 11px; color: var(--muted);
+    font-variant-numeric: tabular-nums; opacity: .7;
+  }
+
+  /* ---------- overlays ---------- */
+  .overlay {
+    position: fixed; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(13,14,18,.92); z-index: 5;
+  }
+  .hud button { pointer-events: auto; }
+  .overlay.hidden { display: none; }
+  .card { max-width: 460px; padding: 0 40px; }
+  h1 { font-size: 52px; font-weight: 200; letter-spacing: .3em; margin-bottom: 18px; }
+  .card p {
+    color: var(--muted); font-size: 14px;
+    line-height: 1.75; margin-bottom: 34px;
+  }
+  button {
+    background: none; border: 1px solid var(--muted); color: var(--ink);
+    padding: 13px 38px; font-size: 11px; letter-spacing: .22em;
+    text-transform: uppercase; cursor: none;
+    transition: border-color .18s, background .18s;
+  }
+  button:hover { border-color: var(--accent); background: rgba(224,65,63,.08); }
+  .stats { display: flex; gap: 48px; margin-bottom: 34px; }
+  .stats div span { display: block; }
+  .note { font-size: 11px; color: var(--muted); margin-top: 18px; opacity: .6; }
+</style>
+</head>
+<body>
+
+<canvas id="stage"></canvas>
+
+<!-- If this audio file is missing or fails to load, the game uses the built-in synth. -->
+<audio id="track" src="song" preload="auto"></audio>
+
+<div class="hud">
+  <div>
+    <div class="label">Score</div>
+    <div class="value" id="score">0</div>
+  </div>
+  <div class="rule"></div>
+  <div>
+    <div class="label">Combo</div>
+    <div id="combo">0</div>
+  </div>
+  <div class="rule"></div>
+  <div>
+    <div class="label">Best</div>
+    <div class="value" id="best">0</div>
+  </div>
+  <div>
+    <div class="label">Accuracy</div>
+    <div id="acc">100.0%</div>
+    <div id="offsetReadout">offset 0.0ms</div>
+  </div>
+  <div>
+    <div class="label">Health</div>
+    <div id="health" style="display:flex;gap:6px;font-size:18px;">
+      <span>♥</span><span>♥</span><span>♥</span><span>♥</span><span>♥</span>
+    </div>
+  </div>
+  <button id="pauseBtn" type="button">Pause</button>
+</div>
+
+<div class="overlay" id="startScreen">
+  <div class="card">
+    <h1>Catch the Beats</h1>
+    <p>Notes fall toward the ring at the bottom of each lane. Click a lane when a note crosses the line, or use D F J K. Space hits the lane under your cursor.</p>
+    <button id="startBtn">Start</button>
+    <div class="note" id="srcNote">Detecting audio source…</div>
+  </div>
+</div>
+
+<div class="overlay hidden" id="endScreen">
+  <div class="card">
+    <h1 style="font-size:34px">Run Complete</h1>
+    <div class="stats">
+      <div><span class="label">Score</span><span class="value" id="finalScore">0</span></div>
+      <div><span class="label">Max Combo</span><span class="value" id="finalCombo">0</span></div>
+      <div><span class="label">Best</span><span class="value" id="finalBest">0</span></div>
+    </div>
+    <button id="retryBtn">Retry</button>
+  </div>
+</div>
+
+<div class="overlay hidden" id="pauseScreen">
+  <div class="card">
+    <h1 style="font-size:34px">Paused</h1>
+    <p>Press Esc to resume.<br>Notes are frozen; the music is too.</p>
+    <button id="resumeBtn">Resume</button>
+  </div>
+</div>
+
+<script>
+/* =========================================================
+   CANVAS SETUP
+   ========================================================= */
+const cvs = document.getElementById('stage');
+const ctx = cvs.getContext('2d');
+
+const UI = {
+  score:  document.getElementById('score'),
+  combo:  document.getElementById('combo'),
+  best:   document.getElementById('best'),
+  acc:    document.getElementById('acc'),
+  offset: document.getElementById('offsetReadout'),
+};
+
+let W = 0, H = 0, DPR = 1;
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth;
+  H = window.innerHeight;
+  cvs.width  = W * DPR;
+  cvs.height = H * DPR;
+  cvs.style.width  = W + 'px';
+  cvs.style.height = H + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+window.addEventListener('resize', resize);
+resize();
+
+/* =========================================================
+   AUDIO
+   Single AudioContext. External <audio> is routed through it
+   via MediaElementSource so hit/miss SFX always have volume
+   control and share one clock.
+   ========================================================= */
+let AC = null;
+let sfxGain = null;
+let musicGain = null;
+let mediaNode = null;
+
+// --- external track ---
+const trackEl = document.getElementById('track');
+let usingExternal = false;   // decided at load time by the probe below
+
+trackEl.addEventListener('canplaythrough', () => {
+  usingExternal = true;
+  showSource('Audio: heartbeat.mp3');
+});
+trackEl.addEventListener('error', () => {
+  usingExternal = false;
+  showSource('Audio: built-in synth (heartbeat.mp3 not found)');
+});
+
+function showSource(text) {
+  const el = document.getElementById('srcNote');
+  if (el) el.textContent = text;
+}
+
+function initAudio() {
+  if (AC) return;
+  AC = new (window.AudioContext || window.webkitAudioContext)();
+
+  musicGain = AC.createGain();
+  musicGain.gain.value = 0.55;
+  musicGain.connect(AC.destination);
+
+  sfxGain = AC.createGain();
+  sfxGain.gain.value = 0.28;
+  sfxGain.connect(AC.destination);
+
+  // Route the <audio> element into the graph (only once per element ever).
+  if (usingExternal && !mediaNode) {
+    try {
+      mediaNode = AC.createMediaElementSource(trackEl);
+      mediaNode.connect(musicGain);
+    } catch (err) {
+      console.warn('Could not route audio element:', err);
+      mediaNode = null;
+    }
+  }
+}
+
+async function resumeAudio() {
+  initAudio();
+  if (AC.state !== 'running') {
+    try { await AC.resume(); } catch (e) {}
+  }
+}
+
+/* ---------- synthesized helpers ---------- */
+function tone(freq, t, dur, type, gainNode, vol) {
+  const o = AC.createOscillator();
+  const g = AC.createGain();
+  o.type = type;
+  o.frequency.setValueAtTime(freq, t);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(vol, t + 0.008);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g).connect(gainNode);
+  o.start(t);
+  o.stop(t + dur + 0.02);
+}
+
+function noiseBurst(t, dur, freq, vol, dest) {
+  const len = Math.max(1, Math.floor(AC.sampleRate * dur));
+  const buf = AC.createBuffer(1, len, AC.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+  const src = AC.createBufferSource();
+  src.buffer = buf;
+  const f = AC.createBiquadFilter();
+  f.type = 'highpass';
+  f.frequency.value = freq;
+  const g = AC.createGain();
+  g.gain.value = vol;
+  src.connect(f).connect(g).connect(dest);
+  src.start(t);
+  return src;
+}
+
+/* ---------- hit / miss SFX ---------- */
+function playHit(perfect) {
+  if (!AC) return;
+  const t = AC.currentTime;
+  tone(perfect ? 880 : 660, t, 0.10, 'triangle', sfxGain, 0.5);
+  noiseBurst(t, 0.05, 4000, 0.25, sfxGain);
+}
+function playMiss() {
+  if (!AC) return;
+  const t = AC.currentTime;
+  const o = AC.createOscillator(), g = AC.createGain();
+  o.type = 'sawtooth';
+  o.frequency.setValueAtTime(160, t);
+  o.frequency.exponentialRampToValueAtTime(60, t + 0.22);
+  g.gain.setValueAtTime(0.22, t);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.24);
+  o.connect(g).connect(sfxGain);
+  o.start(t); o.stop(t + 0.26);
+}
+
+/* ---------- synth fallback music ---------- */
+const BPM = 100;
+const SPB = 60 / BPM;
+const BAR = SPB * 4;
+const SONG_LEN = 48;              // bars  -> 115.2s
+const bassLine = [55.00, 55.00, 73.42, 65.41];
+
+let synthOn = false;
+let synthNodes = [];
+let nextBarTime = 0;
+let nextBarIdx = 0;
+let synthTimer = null;
+
+function scheduleBar(barIndex, when) {
+  const root = bassLine[barIndex % bassLine.length];
+
+  const o = AC.createOscillator(), g = AC.createGain();
+  o.type = 'sine';
+  o.frequency.value = root;
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.linearRampToValueAtTime(0.9, when + 0.05);
+  g.gain.setValueAtTime(0.9, when + BAR - 0.15);
+  g.gain.linearRampToValueAtTime(0.0001, when + BAR);
+  o.connect(g).connect(musicGain);
+  o.start(when); o.stop(when + BAR + 0.05);
+  synthNodes.push(o);
+
+  [root * 4, root * 4 * 1.189, root * 4 * 1.498].forEach((freq) => {
+    const po = AC.createOscillator(), pg = AC.createGain();
+    po.type = 'triangle';
+    po.frequency.value = freq;
+    pg.gain.setValueAtTime(0.0001, when);
+    pg.gain.linearRampToValueAtTime(0.05, when + 0.4);
+    pg.gain.linearRampToValueAtTime(0.0001, when + BAR);
+    po.connect(pg).connect(musicGain);
+    po.start(when); po.stop(when + BAR + 0.05);
+    synthNodes.push(po);
+  });
+
+  [0, 2].forEach((b) => {
+    const bt = when + b * SPB;
+    const ko = AC.createOscillator(), kg = AC.createGain();
+    ko.frequency.setValueAtTime(120, bt);
+    ko.frequency.exponentialRampToValueAtTime(45, bt + 0.12);
+    kg.gain.setValueAtTime(0.8, bt);
+    kg.gain.exponentialRampToValueAtTime(0.0001, bt + 0.14);
+    ko.connect(kg).connect(musicGain);
+    ko.start(bt); ko.stop(bt + 0.16);
+    synthNodes.push(ko);
+  });
+
+  [0.5, 1.5, 2.5, 3.5].forEach((b) => {
+    synthNodes.push(noiseBurst(when + b * SPB, 0.03, 7000, 0.12, musicGain));
+  });
+}
+
+function synthScheduler() {
+  if (!synthOn) return;
+  while (nextBarTime < AC.currentTime + 0.6) {
+    scheduleBar(nextBarIdx++, nextBarTime);
+    nextBarTime += BAR;
+  }
+  synthTimer = setTimeout(synthScheduler, 120);
+}
+
+function startMusic() {
+  if (usingExternal) {
+    trackEl.currentTime = 0;
+    const p = trackEl.play();
+    if (p && p.catch) p.catch(err => console.warn('Playback blocked:', err));
+    return AC.currentTime;                      // music starts ~now
+  }
+  synthOn = true;
+  nextBarTime = AC.currentTime + 0.15;
+  nextBarIdx = 0;
+  synthScheduler();
+  return nextBarTime;                           // first bar begins here
+}
+
+function stopMusic() {
+  if (usingExternal) {
+    trackEl.pause();
+    trackEl.currentTime = 0;
+  }
+  synthOn = false;
+  if (synthTimer) { clearTimeout(synthTimer); synthTimer = null; }
+  synthNodes.forEach(n => { try { n.stop(); } catch (e) {} });
+  synthNodes = [];
+}
+
+/* =========================================================
+   CURSOR + TRAIL
+   ========================================================= */
+const mouse = { x: W / 2, y: H / 2 };
+const trail = [];
+const TRAIL_LEN = 26;
+
+window.addEventListener('mousemove', e => {
+  mouse.x = e.clientX;
+  mouse.y = e.clientY;
+});
+
+function drawCursor() {
+  trail.unshift({ x: mouse.x, y: mouse.y });
+  if (trail.length > TRAIL_LEN) trail.pop();
+
+  for (let i = trail.length - 1; i > 0; i--) {
+    const p = trail[i], prev = trail[i - 1];
+    p.x += (prev.x - p.x) * 0.45;
+    p.y += (prev.y - p.y) * 0.45;
+    const k = 1 - i / TRAIL_LEN;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 7 * k, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(224, 65, 63, ' + (k * 0.22) + ')';
+    ctx.fill();
+  }
+
+  ctx.beginPath();
+  ctx.arc(mouse.x, mouse.y, 6, 0, Math.PI * 2);
+  ctx.fillStyle = '#e0413f';
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.arc(mouse.x, mouse.y, 11, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(224,65,63,.35)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+}
+
+/* =========================================================
+   GAME STATE
+   ========================================================= */
+const LANES = 4;
+const HIT_Y_RATIO = 0.78;
+const APPROACH = 1.35;
+const PERFECT = 0.055;
+const GOOD = 0.115;
+
+let notes = [], particles = [], floaters = [], rings = [];
+let running = false;
+let startTime = 0;
+let score = 0, combo = 0, maxCombo = 0, hits = 0, total = 0;
+let OFFSET = 0;
+let misses = 0;
+const MAX_MISSES = 5;
+let health = 5;
+
+let best = 0;
+try { best = +(localStorage.getItem('pulse_best') || 0) || 0; } catch (e) { best = 0; }
+UI.best.textContent = best.toLocaleString();
+
+/* ---------- chart ---------- */
+function buildChart() {
+  notes = [];
+  total = 0;
+  let seed = 20261105;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+
+  for (let bar = 0; bar < SONG_LEN; bar++) {
+    if (bar < 2) continue;                       // intro breather
+    const barT = bar * BAR;
+    const density = bar < 8 ? 0.45 : bar < 20 ? 0.62 : 0.78;
+    for (let step = 0; step < 8; step++) {
+      if (rnd() > density) continue;
+      notes.push({
+        t: barT + step * (SPB / 2),
+        lane: Math.floor(rnd() * LANES),
+        hit: false,
+        missed: false,
+        judged: null
+      });
+      total++;
+    }
+  }
+  notes.sort((a, b) => a.t - b.t);
+}
+
+/* ---------- geometry ---------- */
+function playfield() {
+  const rightPanel = 260;
+  const w = Math.max(320, W - rightPanel);
+  const pad = Math.min(90, w * 0.12);
+  const left = pad;
+  const usable = w - pad * 2;
+  return { left, usable, laneW: usable / LANES, hitY: H * HIT_Y_RATIO };
+}
+function laneX(i) {
+  const p = playfield();
+  return p.left + p.laneW * (i + 0.5);
+}
+function clampLane(i) {
+  return Math.max(0, Math.min(LANES - 1, i));
+}
+
+/* ---------- judging ---------- */
+function judge(lane) {
+  if (!AC) return;
+  lane = clampLane(lane);
+
+  const now = (AC.currentTime - startTime) + OFFSET;
+  let note = null, bestErr = Infinity;
+
+  for (let i = 0; i < notes.length; i++) {
+    const n = notes[i];
+    if (n.hit || n.missed || n.lane !== lane) continue;
+    const err = Math.abs(n.t - now);
+    if (err < bestErr) { bestErr = err; note = n; }
+  }
+
+  const p = playfield();
+
+  if (!note || bestErr > GOOD) {                 // whiff — no penalty
+    pulseRing(lane, '#6f7280');
+    return;
+  }
+
+  note.hit = true;
+  hits++;
+  combo++;
+  if (combo > maxCombo) maxCombo = combo;
+
+  const perfect = bestErr <= PERFECT;
+  score += (perfect ? 300 : 150) + combo * 5;
+  note.judged = perfect ? 'PERFECT' : 'GOOD';
+
+  playHit(perfect);
+  spawnParticles(laneX(lane), p.hitY, perfect);
+  floaters.push({
+    x: laneX(lane), y: p.hitY - 34,
+    text: note.judged, life: 1,
+    color: perfect ? '#d9c48a' : '#e8e6e3'
+  });
+  pulseRing(lane, perfect ? '#d9c48a' : '#e8e6e3');
+  syncHUD(true);
+}
+
+function registerMiss(note) {
+  note.missed = true;
+  combo = 0;
+  misses++;
+  health--;
+  syncHealth();
+  playMiss();
+  floaters.push({
+    x: laneX(note.lane), y: playfield().hitY - 34,
+    text: 'MISS', life: 1, color: '#e0413f'
+  });
+  syncHUD(false);
+
+  if (health <= 0) {
+    endRun();
+  }
+}
+
+/* ---------- fx ---------- */
+function pulseRing(lane, color) {
+  rings.push({ x: laneX(lane), y: playfield().hitY, r: 16, a: 0.6, color });
+}
+function spawnParticles(x, y, perfect) {
+  const n = perfect ? 14 : 8;
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const s = 1 + Math.random() * (perfect ? 3.4 : 2);
+    particles.push({
+      x, y,
+      vx: Math.cos(a) * s,
+      vy: Math.sin(a) * s - 1,
+      life: 1,
+      color: perfect ? '#d9c48a' : '#9a9caa'
+    });
+  }
+}
+
+/* ---------- HUD ---------- */
+function syncHUD(bump) {
+  UI.score.textContent = score.toLocaleString();
+  UI.combo.textContent = combo;
+  const acc = total ? (hits / total) * 100 : 100;
+  UI.acc.textContent = acc.toFixed(1) + '%';
+  UI.offset.textContent = 'offset ' + Math.round(OFFSET * 1000) + 'ms';
+  if (bump) {
+    UI.combo.classList.remove('bump');
+    void UI.combo.offsetWidth;
+    UI.combo.classList.add('bump');
+  }
+}
+function syncHealth() {
+  const hearts = document.getElementById('health');
+  if (!hearts) return;
+  const spans = hearts.querySelectorAll('span');
+  for (let i = 0; i < spans.length; i++) {
+    if (i < health) {
+      spans[i].textContent = '♥';
+      spans[i].style.color = '#e0413f';
+      spans[i].style.opacity = '1';
+    } else {
+      spans[i].textContent = '♡';
+      spans[i].style.color = '#6f7280';
+      spans[i].style.opacity = '0.4';
+    }
+  }
+}
+
+/* ---------- input ---------- */
+window.addEventListener('mousedown', e => {
+  if (!running || paused) return;
+  const p = playfield();
+  judge(clampLane(Math.floor((e.clientX - p.left) / p.laneW)));
+});
+
+window.addEventListener('keydown', e => {
+  // Esc works whether we're mid-run or already paused
+  if (e.code === 'Escape') {
+    e.preventDefault();
+    if (running && !paused) pauseGame();
+    else if (paused) resumeGame();
+    return;
+  }
+
+  if (e.repeat) return;
+
+  if (e.key === '[') { OFFSET -= 0.005; syncHUD(false); return; }
+  if (e.key === ']') { OFFSET += 0.005; syncHUD(false); return; }
+
+  if (!running || paused) return;
+
+  const keyMap = { KeyD: 0, KeyF: 1, KeyJ: 2, KeyK: 3 };
+  if (keyMap[e.code] !== undefined) {
+    e.preventDefault();
+    judge(keyMap[e.code]);
+    return;
+  }
+  if (e.code === 'Space') {
+    e.preventDefault();
+    const p = playfield();
+    judge(clampLane(Math.floor((mouse.x - p.left) / p.laneW)));
+  }
+});
+/* =========================================================
+   RENDER
+   ========================================================= */
+function drawBackground(now) {
+  ctx.fillStyle = '#0d0e12';
+  ctx.fillRect(0, 0, W, H);
+
+  const p = playfield();
+
+  ctx.strokeStyle = '#23242e';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= LANES; i++) {
+    const x = Math.round(p.left + p.laneW * i) + 0.5;
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, H);
+    ctx.stroke();
+  }
+
+  // beat grid scrolling with the music
+  ctx.strokeStyle = 'rgba(255,255,255,.035)';
+  const firstBeat = Math.floor(now / SPB) * SPB;
+  for (let b = 0; b < Math.ceil(APPROACH / SPB) + 2; b++) {
+    const bt = firstBeat + b * SPB;
+    const prog = (bt - now) / APPROACH;
+    if (prog < 0 || prog > 1) continue;
+    const y = p.hitY - prog * p.hitY;
+    ctx.beginPath();
+    ctx.moveTo(p.left, y);
+    ctx.lineTo(p.left + p.usable, y);
+    ctx.stroke();
+  }
+
+  ctx.strokeStyle = 'rgba(232,230,227,.22)';
+  ctx.beginPath();
+  ctx.moveTo(p.left, p.hitY + 0.5);
+  ctx.lineTo(p.left + p.usable, p.hitY + 0.5);
+  ctx.stroke();
+
+  for (let i = 0; i < LANES; i++) {
+    ctx.beginPath();
+    ctx.arc(laneX(i), p.hitY, 15, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(232,230,227,.18)';
+    ctx.stroke();
+  }
+}
+
+function drawNotes(now) {
+  const p = playfield();
+  for (let i = 0; i < notes.length; i++) {
+    const n = notes[i];
+    if (n.hit || n.missed) continue;
+
+    const prog = (n.t - now) / APPROACH;
+    if (prog > 1 || prog < -0.25) continue;
+
+    const y = p.hitY - prog * p.hitY;
+    const scale = 0.55 + 0.45 * (1 - prog);
+    const alpha = prog > 0.85 ? (1 - prog) / 0.15 : 1;
+
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+    ctx.beginPath();
+    ctx.arc(laneX(n.lane), y, 13 * scale, 0, Math.PI * 2);
+    ctx.fillStyle = '#e8e6e3';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(laneX(n.lane), y, 13 * scale + 4, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(232,230,227,.12)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function drawFX() {
+  for (let i = rings.length - 1; i >= 0; i--) {
+    const r = rings[i];
+    r.r += 3.2;
+    r.a *= 0.88;
+    if (r.a < 0.02) { rings.splice(i, 1); continue; }
+    ctx.globalAlpha = r.a;
+    ctx.beginPath();
+    ctx.arc(r.x, r.y, r.r, 0, Math.PI * 2);
+    ctx.strokeStyle = r.color;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const q = particles[i];
+    q.x += q.vx;
+    q.y += q.vy;
+    q.vy += 0.12;
+    q.life -= 0.028;
+    if (q.life <= 0) { particles.splice(i, 1); continue; }
+    ctx.globalAlpha = q.life;
+    ctx.fillStyle = q.color;
+    ctx.fillRect(q.x, q.y, 2, 2);
+    ctx.globalAlpha = 1;
+  }
+
+  ctx.textAlign = 'center';
+  ctx.font = '300 12px "Helvetica Neue", Arial, sans-serif';
+  for (let i = floaters.length - 1; i >= 0; i--) {
+    const f = floaters[i];
+    f.y -= 0.55;
+    f.life -= 0.02;
+    if (f.life <= 0) { floaters.splice(i, 1); continue; }
+    ctx.globalAlpha = f.life;
+    ctx.fillStyle = f.color;
+    ctx.fillText(f.text, f.x, f.y);
+    ctx.globalAlpha = 1;
+  }
+  ctx.textAlign = 'left';
+}
+
+/* =========================================================
+   LOOP
+   ========================================================= */
+let paused = false;
+let pausedAt = 0;
+
+function frame() {
+  if (!running) return;
+  if (paused) return;                            // stop scheduling frames while paused
+
+  const now = (AC.currentTime - startTime) + OFFSET;
+
+  for (let i = 0; i < notes.length; i++) {
+    const n = notes[i];
+    if (!n.hit && !n.missed && now - n.t > GOOD) registerMiss(n);
+  }
+
+  drawBackground(now);
+  drawNotes(now);
+  drawFX();
+  drawCursor();
+
+  if (now > SONG_LEN * BAR + 2) { endRun(); return; }
+  requestAnimationFrame(frame);
+}
+
+function pauseGame() {
+  if (!running || paused) return;
+  paused = true;
+  pausedAt = (AC.currentTime - startTime) + OFFSET;   // freeze point
+
+  if (usingExternal) trackEl.pause();
+  else {
+    synthOn = false;
+    if (synthTimer) { clearTimeout(synthTimer); synthTimer = null; }
+    synthNodes.forEach(n => { try { n.stop(); } catch (e) {} });
+    synthNodes = [];
+  }
+
+  document.getElementById('pauseScreen').classList.remove('hidden');
+}
+
+function resumeGame() {
+  if (!paused) return;
+  document.getElementById('pauseScreen').classList.add('hidden');
+
+  if (usingExternal) {
+    trackEl.currentTime = Math.max(0, pausedAt);      // seek back to the freeze point
+    const p = trackEl.play();
+    if (p && p.catch) p.catch(err => console.warn('Resume blocked:', err));
+    startTime = AC.currentTime - pausedAt;
+  } else {
+    // synth can't be "unstopped", so restart its scheduler at the freeze offset
+    synthOn = true;
+    nextBarTime = AC.currentTime + 0.15;
+    nextBarIdx = Math.round(pausedAt / BAR);          // keep the chord progression in place
+    synthScheduler();
+    startTime = AC.currentTime - pausedAt;            // notes resume from pausedAt
+  }
+
+  paused = false;
+  requestAnimationFrame(frame);
+}
+/* =========================================================
+   FLOW
+   ========================================================= */
+const startScreen = document.getElementById('startScreen');
+const endScreen = document.getElementById('endScreen');
+
+async function begin() {
+  await resumeAudio();
+  paused = false;
+  score = 0; combo = 0; maxCombo = 0; hits = 0;
+  misses = 0; health = MAX_MISSES;
+  syncHealth();
+  particles = []; floaters = []; rings = [];
+
+  buildChart();
+  syncHUD(false);
+
+  startTime = startMusic();                      // both paths return a start time
+  running = true;
+
+  startScreen.classList.add('hidden');
+  endScreen.classList.add('hidden');
+  requestAnimationFrame(frame);
+}
+
+function endRun() {
+  if (!running) return;
+  running = false;
+  stopMusic();
+
+  if (score > best) {
+    best = score;
+    try { localStorage.setItem('pulse_best', String(best)); } catch (e) {}
+  }
+  UI.best.textContent = best.toLocaleString();
+
+  document.getElementById('finalScore').textContent = score.toLocaleString();
+  document.getElementById('finalCombo').textContent = maxCombo;
+  document.getElementById('finalBest').textContent = best.toLocaleString();
+  endScreen.classList.remove('hidden');
+}
+
+document.getElementById('startBtn').addEventListener('click', begin);
+document.getElementById('retryBtn').addEventListener('click', begin);
+document.getElementById('resumeBtn').addEventListener('click', resumeGame);
+document.getElementById('pauseBtn').addEventListener('click', pauseGame);
+
+/* idle render so the trail lives on the menus too */
+(function idle() {
+  if (!running) {
+    ctx.fillStyle = '#0d0e12';
+    ctx.fillRect(0, 0, W, H);
+    drawCursor();
+  }
+  requestAnimationFrame(idle);
+})();
+
+showSource('Audio: checking song.mp3…');
+</script>
+</body>
+</html>
